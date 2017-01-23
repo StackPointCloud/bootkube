@@ -43,15 +43,17 @@ const (
 // AssetConfig holds all configuration needed when generating
 // the default set of assets.
 type Config struct {
-	EtcdServers     []*url.URL
-	APIServers      []*url.URL
-	CACert          *x509.Certificate
-	CAPrivKey       *rsa.PrivateKey
-	AltNames        *tlsutil.AltNames
-	SelfHostKubelet bool
-	SelfHostedEtcd  bool
-	StorageBackend  string
-	CloudProvider   string
+	EtcdServers           []*url.URL
+	APIServers            []*url.URL
+	CACert                *x509.Certificate
+	CAPrivKey             *rsa.PrivateKey
+	AltNames              *tlsutil.AltNames
+	SelfHostKubelet       bool
+	SelfHostedEtcd        bool
+	StorageBackend        string
+	CloudProvider         string
+	APIServerSecurePort   int
+	APIServerInsecurePort int
 }
 
 // NewDefaultAssets returns a list of default assets, optionally

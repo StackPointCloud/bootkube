@@ -27,16 +27,18 @@ var (
 	}
 
 	renderOpts struct {
-		assetDir          string
-		caCertificatePath string
-		caPrivateKeyPath  string
-		etcdServers       string
-		apiServers        string
-		altNames          string
-		selfHostKubelet   bool
-		storageBackend    string
-		cloudProvider     string
-		selfHostedEtcd    bool
+		assetDir              string
+		caCertificatePath     string
+		caPrivateKeyPath      string
+		etcdServers           string
+		apiServers            string
+		altNames              string
+		selfHostKubelet       bool
+		storageBackend        string
+		cloudProvider         string
+		selfHostedEtcd        bool
+		apiServerSecurePort   int
+		apiServerInsecurePort int
 	}
 )
 
@@ -52,6 +54,8 @@ func init() {
 	cmdRender.Flags().BoolVar(&renderOpts.selfHostKubelet, "self-host-kubelet", false, "Create a self-hosted kubelet daemonset.")
 	cmdRender.Flags().StringVar(&renderOpts.cloudProvider, "cloud-provider", "", "The provider for cloud services.  Empty string for no provider")
 	cmdRender.Flags().BoolVar(&renderOpts.selfHostedEtcd, "experimental-self-hosted-etcd", false, "Create self-hosted etcd assets.")
+	cmdRender.Flags().IntVar(&renderOpts.apiServerSecurePort, "api-server-secure-port", 443, "API Server secure port.")
+	cmdRender.Flags().IntVar(&renderOpts.apiServerInsecurePort, "api-server-insecure-port", 8080, "API Server secure port.")
 }
 
 func runCmdRender(cmd *cobra.Command, args []string) error {
@@ -114,15 +118,17 @@ func flagsToAssetConfig() (c *asset.Config, err error) {
 		}
 	}
 	return &asset.Config{
-		EtcdServers:     etcdServers,
-		CACert:          caCert,
-		CAPrivKey:       caPrivKey,
-		APIServers:      apiServers,
-		AltNames:        altNames,
-		SelfHostKubelet: renderOpts.selfHostKubelet,
-		StorageBackend:  renderOpts.storageBackend,
-		CloudProvider:   renderOpts.cloudProvider,
-		SelfHostedEtcd:  renderOpts.selfHostedEtcd,
+		EtcdServers:           etcdServers,
+		CACert:                caCert,
+		CAPrivKey:             caPrivKey,
+		APIServers:            apiServers,
+		AltNames:              altNames,
+		SelfHostKubelet:       renderOpts.selfHostKubelet,
+		StorageBackend:        renderOpts.storageBackend,
+		CloudProvider:         renderOpts.cloudProvider,
+		SelfHostedEtcd:        renderOpts.selfHostedEtcd,
+		APIServerSecurePort:   renderOpts.apiServerSecurePort,
+		APIServerInsecurePort: renderOpts.apiServerInsecurePort,
 	}, nil
 }
 
