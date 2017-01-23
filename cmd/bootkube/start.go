@@ -24,9 +24,11 @@ var (
 	}
 
 	startOpts struct {
-		assetDir       string
-		etcdServer     string
-		selfHostedEtcd bool
+		assetDir              string
+		etcdServer            string
+		selfHostedEtcd        bool
+		apiServerSecurePort   int
+		apiServerInsecurePort int
 	}
 )
 
@@ -35,6 +37,8 @@ func init() {
 	cmdStart.Flags().StringVar(&startOpts.etcdServer, "etcd-server", "http://127.0.0.1:2379", "Single etcd node to use during bootkube bootstrap process.")
 	cmdStart.Flags().StringVar(&startOpts.assetDir, "asset-dir", "", "Path to the cluster asset directory. Expected layout genereted by the `bootkube render` command.")
 	cmdStart.Flags().BoolVar(&startOpts.selfHostedEtcd, "experimental-self-hosted-etcd", false, "Self hosted etcd mode. Includes starting the initial etcd member by bootkube.")
+	cmdStart.Flags().IntVar(&startOpts.apiServerSecurePort, "api-server-secure-port", 443, "API Server secure port.")
+	cmdStart.Flags().IntVar(&startOpts.apiServerInsecurePort, "api-server-insecure-port", 8080, "API Server secure port.")
 }
 
 func runCmdStart(cmd *cobra.Command, args []string) error {
@@ -51,9 +55,11 @@ func runCmdStart(cmd *cobra.Command, args []string) error {
 	}
 
 	bk, err := bootkube.NewBootkube(bootkube.Config{
-		AssetDir:       startOpts.assetDir,
-		EtcdServer:     etcdServer,
-		SelfHostedEtcd: startOpts.selfHostedEtcd,
+		AssetDir:              startOpts.assetDir,
+		EtcdServer:            etcdServer,
+		SelfHostedEtcd:        startOpts.selfHostedEtcd,
+		APIServerSecurePort:   startOpts.apiServerSecurePort,
+		APIServerInsecurePort: startOpts.apiServerInsecurePort,
 	})
 
 	if err != nil {

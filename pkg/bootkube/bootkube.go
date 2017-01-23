@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -30,9 +31,11 @@ var requiredPods = []string{
 }
 
 type Config struct {
-	AssetDir       string
-	EtcdServer     *url.URL
-	SelfHostedEtcd bool
+	AssetDir              string
+	EtcdServer            *url.URL
+	SelfHostedEtcd        bool
+	APIServerSecurePort   int
+	APIServerInsecurePort int
 }
 
 type bootkube struct {
@@ -82,8 +85,8 @@ func NewBootkube(config Config) (*bootkube, error) {
 func makeAPIServerFlags(config Config) []string {
 	res := []string{
 		"--bind-address=0.0.0.0",
-		"--secure-port=443",
-		"--insecure-port=8080",
+		"--secure-port=" + strconv.Itoa(config.APIServerSecurePort),
+		"--insecure-port=" + strconv.Itoa(config.APIServerInsecurePort),
 		"--allow-privileged=true",
 		"--tls-private-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathAPIServerKey),
 		"--tls-cert-file=" + filepath.Join(config.AssetDir, asset.AssetPathAPIServerCert),

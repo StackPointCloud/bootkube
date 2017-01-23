@@ -141,8 +141,8 @@ spec:
         - /hyperkube
         - apiserver
         - --bind-address=0.0.0.0
-        - --secure-port=443
-        - --insecure-port=8080
+				- --secure-port={{ .APIServerSecurePort }}
+        - --insecure-port={{ .APIServerInsecurePort }}
         - --advertise-address=$(POD_IP)
         - --etcd-servers={{ range $i, $e := .EtcdServers }}{{ if $i }},{{end}}{{ $e }}{{end}}
         - --storage-backend={{.StorageBackend}}
