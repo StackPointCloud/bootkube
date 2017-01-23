@@ -141,7 +141,7 @@ spec:
         - /hyperkube
         - apiserver
         - --bind-address=0.0.0.0
-				- --secure-port={{ .APIServerSecurePort }}
+        - --secure-port={{ .APIServerSecurePort }}
         - --insecure-port={{ .APIServerInsecurePort }}
         - --advertise-address=$(POD_IP)
         - --etcd-servers={{ range $i, $e := .EtcdServers }}{{ if $i }},{{end}}{{ $e }}{{end}}
