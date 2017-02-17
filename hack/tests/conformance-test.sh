@@ -2,7 +2,7 @@
 set -euo pipefail
 
 CONFORMANCE_REPO=${CONFORMANCE_REPO:-github.com/coreos/kubernetes}
-CONFORMANCE_VERSION=${CONFORMANCE_VERSION:-v1.5.2+coreos.1}
+CONFORMANCE_VERSION=${CONFORMANCE_VERSION:-v1.5.3+coreos.0}
 
 usage() {
     echo "USAGE:"
@@ -20,7 +20,7 @@ ssh_host=$1
 ssh_port=$2
 ssh_key=$3
 
-KUBECONFIG=${KUBECONFIG:-/home/core/cluster/auth/kubeconfig}
+KUBECONFIG=${KUBECONFIG:-/home/core/cluster/auth/admin-kubeconfig}
 K8S_SRC=/home/core/go/src/k8s.io/kubernetes
 ssh -q -o stricthostkeychecking=no -i ${ssh_key} -p ${ssh_port} core@${ssh_host} \
     "mkdir -p ${K8S_SRC} && [[ -d ${K8S_SRC}/.git ]] || git clone https://${CONFORMANCE_REPO} ${K8S_SRC}"

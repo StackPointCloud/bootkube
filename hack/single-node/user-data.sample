@@ -2,7 +2,13 @@
 
 coreos:
   units:
-    - name: etcd2.service
+    - name: etcd-member.service
+      enable: true
+      drop-ins:
+        - name: 10-version.conf
+          content: |
+            [Service]
+            Environment="ETCD_IMAGE_TAG=v3.1.0"
       command: start
     - name: kubelet.service
       enable: true
@@ -11,7 +17,7 @@ coreos:
         [Service]
         EnvironmentFile=/etc/environment
         Environment=KUBELET_ACI=quay.io/coreos/hyperkube
-        Environment=KUBELET_VERSION=v1.5.2_coreos.1
+        Environment=KUBELET_VERSION=v1.5.3_coreos.0
         Environment="RKT_OPTS=--volume var-lib-cni,kind=host,source=/var/lib/cni --mount volume=var-lib-cni,target=/var/lib/cni"
         ExecStartPre=/bin/mkdir -p /etc/kubernetes/manifests
         ExecStartPre=/bin/mkdir -p /etc/kubernetes/cni/net.d
@@ -20,6 +26,8 @@ coreos:
         ExecStartPre=/bin/mkdir -p /var/lib/cni
         ExecStart=/usr/lib/coreos/kubelet-wrapper \
           --kubeconfig=/etc/kubernetes/kubeconfig \
+          --experimental-bootstrap-kubeconfig=/etc/kubernetes/bootstrap-kubeconfig \
+          --cert-dir=/etc/kubernetes/secrets \
           --require-kubeconfig \
           --cni-conf-dir=/etc/kubernetes/cni/net.d \
           --network-plugin=cni \
@@ -39,7 +47,7 @@ coreos:
         WantedBy=multi-user.target
 
 write_files:
-  - path: "/etc/kubernetes/kubeconfig"
+  - path: "/etc/kubernetes/bootstrap-kubeconfig"
     permissions: "0644"
     owner: core
     content: |
