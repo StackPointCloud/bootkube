@@ -50,22 +50,20 @@ func NewBootkube(config Config) (*bootkube, error) {
 	apiServer := apiserver.NewServerRunOptions()
 	fs := pflag.NewFlagSet("apiserver", pflag.ExitOnError)
 	apiServer.AddFlags(fs)
-	fs.Parse(makeAPIServerFlags(config))
+	flags, err := makeAPIServerFlags(config)
+	if err != nil {
+		return nil, err
+	}
+	fs.Parse(flags)
 
 	cmServer := controller.NewCMServer()
 	fs = pflag.NewFlagSet("controllermanager", pflag.ExitOnError)
 	cmServer.AddFlags(fs)
-	fs.Parse([]string{
-		"--master=" + insecureAPIAddr,
-		"--service-account-private-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathServiceAccountPrivKey),
-		"--root-ca-file=" + filepath.Join(config.AssetDir, asset.AssetPathCACert),
-		"--cluster-signing-cert-file=" + filepath.Join(config.AssetDir, asset.AssetPathCACert),
-		"--cluster-signing-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathCAKey),
-		"--allocate-node-cidrs=true",
-		"--cluster-cidr=10.2.0.0/16",
-		"--configure-cloud-routes=false",
-		"--leader-elect=true",
-	})
+	flags, err = makeControllerManagerFlags(config)
+	if err != nil {
+		return nil, err
+	}
+	fs.Parse(flags)
 
 	schedServer := scheduler.NewSchedulerServer()
 	fs = pflag.NewFlagSet("scheduler", pflag.ExitOnError)
@@ -84,8 +82,12 @@ func NewBootkube(config Config) (*bootkube, error) {
 	}, nil
 }
 
-func makeAPIServerFlags(config Config) []string {
-	res := []string{
+func makeAPIServerFlags(config Config) ([]string, error) {
+	serviceCIDR, err := detectServiceCIDR(config)
+	if err != nil {
+		return []string{}, err
+	}
+	return []string{
 		"--bind-address=0.0.0.0",
 		"--secure-port=" + strconv.Itoa(config.APIServerSecurePort),
 		"--insecure-port=" + strconv.Itoa(config.APIServerInsecurePort),
@@ -93,16 +95,29 @@ func makeAPIServerFlags(config Config) []string {
 		"--tls-private-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathAPIServerKey),
 		"--tls-cert-file=" + filepath.Join(config.AssetDir, asset.AssetPathAPIServerCert),
 		"--client-ca-file=" + filepath.Join(config.AssetDir, asset.AssetPathCACert),
-		"--token-auth-file=" + filepath.Join(config.AssetDir, asset.AssetPathBootstrapAuthToken),
-		"--authorization-mode=RBAC",
 		"--etcd-servers=" + config.EtcdServer.String(),
-		"--service-cluster-ip-range=10.3.0.0/24",
+		"--service-cluster-ip-range=" + serviceCIDR,
 		"--service-account-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathServiceAccountPubKey),
 		"--admission-control=NamespaceLifecycle,ServiceAccount",
 		"--runtime-config=api/all=true",
 		"--storage-backend=etcd3",
+	}, nil
+}
+
+func makeControllerManagerFlags(config Config) ([]string, error) {
+	podCIDR, err := detectPodCIDR(config)
+	if err != nil {
+		return []string{}, err
 	}
-	return res
+	return []string{
+		"--master=" + insecureAPIAddr,
+		"--service-account-private-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathServiceAccountPrivKey),
+		"--root-ca-file=" + filepath.Join(config.AssetDir, asset.AssetPathCACert),
+		"--allocate-node-cidrs=true",
+		"--cluster-cidr=" + podCIDR,
+		"--configure-cloud-routes=false",
+		"--leader-elect=true",
+	}, nil
 }
 
 func (b *bootkube) Run() error {
@@ -121,7 +136,6 @@ func (b *bootkube) Run() error {
 		requiredPods = append(requiredPods, "etcd-operator")
 	}
 	go func() { errch <- WaitUntilPodsRunning(requiredPods, assetTimeout, b.selfHostedEtcd) }()
-	go func() { errch <- ApproveKubeletCSRs() }()
 
 	// If any of the bootkube services exit, it means it is unrecoverable and we should exit.
 	err := <-errch
