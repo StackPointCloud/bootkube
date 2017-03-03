@@ -3,7 +3,6 @@ package asset
 import (
 	"crypto/rsa"
 	"crypto/x509"
-	"net"
 
 	"github.com/kubernetes-incubator/bootkube/pkg/tlsutil"
 )
@@ -62,7 +61,7 @@ func newCACert() (*rsa.PrivateKey, *x509.Certificate, error) {
 
 	config := tlsutil.CertConfig{
 		CommonName:   "kube-ca",
-		Organization: []string{"kube-aws"},
+		Organization: []string{"bootkube"},
 	}
 
 	cert, err := tlsutil.NewSelfSignedCACertificate(config, key)
@@ -78,7 +77,6 @@ func newAPIKeyAndCert(caCert *x509.Certificate, caPrivKey *rsa.PrivateKey, altNa
 	if err != nil {
 		return nil, nil, err
 	}
-	altNames.IPs = append(altNames.IPs, net.ParseIP("10.3.0.1"))
 	altNames.DNSNames = append(altNames.DNSNames, []string{
 		"kubernetes",
 		"kubernetes.default",
@@ -99,13 +97,20 @@ func newAPIKeyAndCert(caCert *x509.Certificate, caPrivKey *rsa.PrivateKey, altNa
 }
 
 func newKubeletKeyAndCert(caCert *x509.Certificate, caPrivKey *rsa.PrivateKey) (*rsa.PrivateKey, *x509.Certificate, error) {
+	// TLS organizations map to Kubernetes groups, and "system:masters"
+	// is a well-known Kubernetes group that gives a user admin power.
+	//
+	// For now, put the kubelets in this group. Later we can restrict
+	// their credentials, likely with the help of TLS bootstrapping.
+	const orgSystemMasters = "system:masters"
+
 	key, err := tlsutil.NewPrivateKey()
 	if err != nil {
 		return nil, nil, err
 	}
 	config := tlsutil.CertConfig{
 		CommonName:   "kubelet",
-		Organization: []string{"kube-node"},
+		Organization: []string{orgSystemMasters},
 	}
 	cert, err := tlsutil.NewSignedCertificate(config, key, caCert, caPrivKey)
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	scheduler "k8s.io/kubernetes/plugin/cmd/kube-scheduler/app/options"
 
 	"github.com/kubernetes-incubator/bootkube/pkg/asset"
+	"github.com/kubernetes-incubator/bootkube/pkg/util/etcdutil"
 )
 
 const (
@@ -83,7 +84,7 @@ func NewBootkube(config Config) (*bootkube, error) {
 }
 
 func makeAPIServerFlags(config Config) ([]string, error) {
-	serviceCIDR, err := detectServiceCIDR(config)
+	serviceCIDR, err := detectServiceCIDR(config.AssetDir)
 	if err != nil {
 		return []string{}, err
 	}
@@ -95,6 +96,7 @@ func makeAPIServerFlags(config Config) ([]string, error) {
 		"--tls-private-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathAPIServerKey),
 		"--tls-cert-file=" + filepath.Join(config.AssetDir, asset.AssetPathAPIServerCert),
 		"--client-ca-file=" + filepath.Join(config.AssetDir, asset.AssetPathCACert),
+		"--authorization-mode=RBAC",
 		"--etcd-servers=" + config.EtcdServer.String(),
 		"--service-cluster-ip-range=" + serviceCIDR,
 		"--service-account-key-file=" + filepath.Join(config.AssetDir, asset.AssetPathServiceAccountPubKey),
@@ -105,7 +107,7 @@ func makeAPIServerFlags(config Config) ([]string, error) {
 }
 
 func makeControllerManagerFlags(config Config) ([]string, error) {
-	podCIDR, err := detectPodCIDR(config)
+	podCIDR, err := detectPodCIDR(config.AssetDir)
 	if err != nil {
 		return []string{}, err
 	}
@@ -132,11 +134,23 @@ func (b *bootkube) Run() error {
 			errch <- err
 		}
 	}()
-	if b.selfHostedEtcd {
-		requiredPods = append(requiredPods, "etcd-operator")
-	}
-	go func() { errch <- WaitUntilPodsRunning(requiredPods, assetTimeout, b.selfHostedEtcd) }()
-
+	go func() {
+		if b.selfHostedEtcd {
+			requiredPods = append(requiredPods, "etcd-operator")
+			etcdServiceIP, err := detectEtcdIP(b.assetDir)
+			if err != nil {
+				errch <- err
+				return
+			}
+			if err := WaitUntilPodsRunning(requiredPods, assetTimeout); err != nil {
+				errch <- err
+				return
+			}
+			errch <- etcdutil.Migrate(etcdServiceIP)
+		} else {
+			errch <- WaitUntilPodsRunning(requiredPods, assetTimeout)
+		}
+	}()
 	// If any of the bootkube services exit, it means it is unrecoverable and we should exit.
 	err := <-errch
 	if err != nil {

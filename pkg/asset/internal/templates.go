@@ -20,6 +20,21 @@ contexts:
     user: kubelet
 `)
 
+	KubeSystemSARoleBindingTemplate = []byte(`apiVersion: rbac.authorization.k8s.io/v1alpha1
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1alpha1
+metadata:
+  name: system:default-sa
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+`)
+
 	KubeletTemplate = []byte(`apiVersion: extensions/v1beta1
 kind: DaemonSet
 metadata:
@@ -45,7 +60,7 @@ spec:
         - --pod-manifest-path=/etc/kubernetes/manifests
         - --allow-privileged
         - --hostname-override=$(NODE_NAME)
-        - --cluster-dns=10.3.0.10
+        - --cluster-dns={{ .DNSServiceIP }}
         - --cluster-domain=cluster.local
         - --kubeconfig=/etc/kubernetes/kubeconfig
         - --require-kubeconfig
@@ -147,13 +162,14 @@ spec:
         - --etcd-servers={{ range $i, $e := .EtcdServers }}{{ if $i }},{{end}}{{ $e }}{{end}}
         - --storage-backend=etcd3
         - --allow-privileged=true
-        - --service-cluster-ip-range=10.3.0.0/24
+        - --service-cluster-ip-range={{ .ServiceCIDR }}
         - --admission-control=NamespaceLifecycle,LimitRanger,ServiceAccount,ResourceQuota
         - --runtime-config=api/all=true
         - --tls-cert-file=/etc/kubernetes/secrets/apiserver.crt
         - --tls-private-key-file=/etc/kubernetes/secrets/apiserver.key
         - --service-account-key-file=/etc/kubernetes/secrets/service-account.pub
         - --client-ca-file=/etc/kubernetes/secrets/ca.crt
+        - --authorization-mode=RBAC
         - --cloud-provider={{ .CloudProvider  }}
         - --anonymous-auth=false
         env:
@@ -235,7 +251,7 @@ spec:
         - controller-manager
         - --allocate-node-cidrs=true
         - --configure-cloud-routes=false
-        - --cluster-cidr=10.2.0.0/16
+        - --cluster-cidr={{ .PodCIDR }}
         - --root-ca-file=/etc/kubernetes/secrets/ca.crt
         - --service-account-private-key-file=/etc/kubernetes/secrets/service-account.key
         - --leader-elect=true
@@ -326,7 +342,7 @@ spec:
         - --kubeconfig=/etc/kubernetes/kubeconfig
         - --proxy-mode=iptables
         - --hostname-override=$(NODE_NAME)
-        - --cluster-cidr=10.2.0.0/16
+        - --cluster-cidr={{ .PodCIDR }}
         env:
           - name: NODE_NAME
             valueFrom:
@@ -513,7 +529,7 @@ metadata:
 spec:
   selector:
     k8s-app: kube-dns
-  clusterIP: 10.3.0.10
+  clusterIP: {{ .DNSServiceIP }}
   ports:
   - name: dns
     port: 53
@@ -539,12 +555,16 @@ spec:
     spec:
       containers:
       - name: etcd-operator
-        image: quay.io/coreos/etcd-operator:c391d8b7638deb81aa877773a0acce389f602415
+        image: quay.io/coreos/etcd-operator:v0.2.1
         env:
         - name: MY_POD_NAMESPACE
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        - name: MY_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
 `)
 
 	EtcdSvcTemplate = []byte(`apiVersion: v1
@@ -556,7 +576,7 @@ spec:
   selector:
     app: etcd
     etcd_cluster: kube-etcd
-  clusterIP: 10.3.0.15
+  clusterIP: {{ .ETCDServiceIP }}
   ports:
   - name: client
     port: 2379
@@ -582,7 +602,7 @@ data:
     }
   net-conf.json: |
     {
-      "Network": "10.2.0.0/16",
+      "Network": "{{ .PodCIDR }}",
       "Backend": {
         "Type": "vxlan"
       }

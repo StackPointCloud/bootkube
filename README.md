@@ -78,6 +78,13 @@ make install
 ### Development
 Running `make run-single` or `make run-multi` resets the single-node or multi-node Vagrant environments, respectively, in the background while compiling bootkube and provisions the fresh VM with bootkube when compilation is complete. This is intended to speed up iteration.
 
+## Running PR Tests
+The basic test suite should run automatically on PRs. It can be re-run by commenting to the PR: `rktbot run tests`. To whitelist an external contributor's PR temporarily, one can use the `ok to test` command.
+
+More extensive self-hosted etcd testing can be run by commenting: `rktbot run etcd tests`. The maintainers will be responsible for determining if this is needed and should pass as it may contain experimental or flaky tests.
+
+If changes are made to the checkpointer code you must run a third type of test: `rktbot run checkpointer tests`
+
 ## Conformance Tests
 
 This repository includes scripts for running the Kubernetes conformance tests agains the [hack/single-node](hack/single-node) and [hack/multi-node](hack/multi-node) launched clusters.
@@ -102,6 +109,12 @@ make conformance-multi
 - Get the concept of kubelet checkpointing upstreamed
 - Prove out the self-hosted model on all new releases of k8s and different platforms
 - Document best-practices for upgrades and upstream the idea of a upgradable daemonset
+
+## Getting Involved
+
+Want to contribute to bootkube? Have Questions? We are looking for active participation from the community
+
+You can find us at the bootkube channel on [Kubernetes slack](https://github.com/kubernetes/community#slack-chat)
 
 ## License
 

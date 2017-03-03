@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/coreos/etcd-operator/pkg/spec"
@@ -20,9 +21,7 @@ import (
 )
 
 const (
-	apiserverAddr = "http://127.0.0.1:8080"
-	etcdServiceIP = "10.3.0.15"
-
+	apiserverAddr   = "http://127.0.0.1:8080"
 	etcdClusterName = "kube-etcd"
 )
 
@@ -31,7 +30,7 @@ var (
 	waitBootEtcdRemovedTime    = 300 * time.Second
 )
 
-func Migrate() error {
+func Migrate(etcdServiceIP string) error {
 	kubecli, err := clientset.NewForConfig(&restclient.Config{
 		Host: apiserverAddr,
 	})
@@ -62,7 +61,7 @@ func Migrate() error {
 	}
 	glog.Info("etcd cluster for migration is now running")
 
-	if err := waitBootEtcdRemoved(); err != nil {
+	if err := waitBootEtcdRemoved(etcdServiceIP); err != nil {
 		return fmt.Errorf("wait boot etcd deleted failed: %v", err)
 	}
 	glog.Info("the boot etcd is removed from the migration cluster")
@@ -70,7 +69,7 @@ func Migrate() error {
 }
 
 func listETCDCluster(ns string, restClient restclient.Interface) restclient.Result {
-	uri := fmt.Sprintf("/apis/coreos.com/v1/namespaces/%s/etcdclusters", ns)
+	uri := fmt.Sprintf("/apis/%s/%s/namespaces/%s/%s", spec.TPRGroup, spec.TPRVersion, ns, spec.TPRKindPlural)
 	return restClient.Get().RequestURI(uri).Do()
 }
 
@@ -118,22 +117,22 @@ func getBootEtcdPodIP(kubecli clientset.Interface) (string, error) {
 
 func createMigratedEtcdCluster(restclient restclient.Interface, host, podIP string) error {
 	b := []byte(fmt.Sprintf(`{
-  "apiVersion": "coreos.com/v1",
-  "kind": "EtcdCluster",
+  "apiVersion": "%s/%s",
+  "kind": "%s",
   "metadata": {
     "name": "%s",
     "namespace": "kube-system"
   },
   "spec": {
     "size": 1,
-    "version": "v3.1.0-alpha.1",
+    "version": "v3.1.0",
     "selfHosted": {
 		"bootMemberClientEndpoint": "http://%s:12379"
     }
   }
-}`, etcdClusterName, podIP))
+}`, spec.TPRGroup, spec.TPRVersion, strings.Title(spec.TPRKind), etcdClusterName, podIP))
 
-	uri := "/apis/coreos.com/v1/namespaces/kube-system/etcdclusters"
+	uri := fmt.Sprintf("/apis/%s/%s/namespaces/kube-system/%s", spec.TPRGroup, spec.TPRVersion, spec.TPRKindPlural)
 	res := restclient.Post().RequestURI(uri).SetHeader("Content-Type", "application/json").Body(b).Do()
 
 	return res.Error()
@@ -149,12 +148,9 @@ func waitEtcdClusterRunning(restclient restclient.Interface) error {
 			return false, fmt.Errorf("fail to get etcdcluster: %v", err)
 		}
 
-		e := &spec.EtcdCluster{}
+		e := &spec.Cluster{}
 		if err := json.Unmarshal(b, e); err != nil {
 			return false, err
-		}
-		if e.Status == nil {
-			return false, nil
 		}
 		switch e.Status.Phase {
 		case spec.ClusterPhaseRunning:
@@ -169,7 +165,7 @@ func waitEtcdClusterRunning(restclient restclient.Interface) error {
 	return err
 }
 
-func waitBootEtcdRemoved() error {
+func waitBootEtcdRemoved(etcdServiceIP string) error {
 	err := wait.Poll(10*time.Second, waitBootEtcdRemovedTime, func() (bool, error) {
 		cfg := clientv3.Config{
 			Endpoints:   []string{fmt.Sprintf("http://%s:2379", etcdServiceIP)},
@@ -200,5 +196,5 @@ func waitBootEtcdRemoved() error {
 }
 
 func makeEtcdClusterURI(name string) string {
-	return fmt.Sprintf("/apis/coreos.com/v1/namespaces/kube-system/etcdclusters/%s", name)
+	return fmt.Sprintf("/apis/%s/%s/namespaces/kube-system/%s/%s", spec.TPRGroup, spec.TPRVersion, spec.TPRKindPlural, name)
 }
