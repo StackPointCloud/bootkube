@@ -34,10 +34,11 @@ const (
 	kubeletAPIPodsURL        = "http://127.0.0.1:10255/pods"
 	kubeletAPIRunningPodsURL = "https://127.0.0.1:10250/runningpods/"
 
-	activeCheckpointPath   = "/etc/kubernetes/manifests"
-	inactiveCheckpointPath = "/srv/kubernetes/manifests"
-	checkpointSecretPath   = "/etc/kubernetes/checkpoint-secrets"
-	kubeconfigPath         = "/etc/kubernetes/kubeconfig"
+	activeCheckpointPath    = "/etc/kubernetes/manifests"
+	inactiveCheckpointPath  = "/srv/kubernetes/manifests"
+	checkpointSecretPath    = "/etc/kubernetes/checkpoint-secrets"
+	checkpointConfigMapPath = "/etc/kubernetes/checkpoint-configmaps"
+	kubeconfigPath          = "/etc/kubernetes/kubeconfig"
 
 	shouldCheckpointAnnotation = "checkpointer.alpha.coreos.com/checkpoint"    // = "true"
 	checkpointParentAnnotation = "checkpointer.alpha.coreos.com/checkpoint-of" // = "podName"
@@ -60,21 +61,64 @@ func main() {
 	}
 
 	glog.Infof("Starting checkpointer for node: %s", nodeName)
-	run(newClient(), nodeName)
+	// This is run as a static pod, so we can't use InClusterConfig (no secrets/service account)
+	// Use the same kubeconfig as the kubelet for auth and api-server location.
+	kubeConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+		&clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		glog.Fatalf("Failed to load kubeconfig: %v", err)
+	}
+	client := clientset.NewForConfigOrDie(kubeConfig)
+
+	load := func(rawData []byte, filepath string) []byte {
+		if len(rawData) > 0 {
+			return rawData
+		}
+		data, err := ioutil.ReadFile(filepath)
+		if err != nil {
+			glog.Fatalf("Failed to load %s: %v", filepath, err)
+		}
+		return data
+	}
+
+	// Grab the kubelet's client certificate out of its kubeconfig.
+	c := kubeConfig.TLSClientConfig
+	clientCert, err := tls.X509KeyPair(load(c.CertData, c.CertFile), load(c.KeyData, c.KeyFile))
+	if err != nil {
+		glog.Fatalf("Failed to load kubelet client cert: %v", err)
+	}
+
+	// Use the kubelet's own client cert to talk to the kubelet's API.
+	// Kubelets with API auth enabled will require this.
+	kubelet := &kubeletClient{
+		client: &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				TLSClientConfig: &tls.Config{
+					Certificates: []tls.Certificate{clientCert},
+					// Kubelet is using a self signed cert.
+					InsecureSkipVerify: true,
+				},
+			},
+		},
+	}
+
+	run(client, kubelet, nodeName)
 }
 
-func run(client clientset.Interface, nodeName string) {
+func run(client clientset.Interface, kubelet *kubeletClient, nodeName string) {
 	for {
 		time.Sleep(3 * time.Second)
 
-		localParentPods, err := getLocalParentPods()
+		localParentPods, err := kubelet.localParentPods()
 		if err != nil {
 			// If we can't determine local state from kubelet api, we shouldn't make any decisions about checkpoints.
 			glog.Errorf("Failed to retrive pod list from kubelet api: %v", err)
 			continue
 		}
 
-		localRunningPods, err := getLocalRunningPods()
+		localRunningPods, err := kubelet.localRunningPods()
 		if err != nil {
 			glog.Errorf("Failed to retrieve running pods from kubelet api: %v", err)
 			continue
@@ -183,7 +227,7 @@ func process(localRunningPods, localParentPods, apiParentPods, activeCheckpoints
 }
 
 // createCheckpointsForValidParents will iterate through pods which are candidates for checkpointing, then:
-// - checkpoint any remote assets they need (e.g. secrets)
+// - checkpoint any remote assets they need (e.g. secrets, configmaps)
 // - sanitize their podSpec, removing unnecessary information
 // - store the manifest on disk in an "inactive" checkpoint location
 //TODO(aaron): Add support for checkpointing configMaps
@@ -213,6 +257,14 @@ func createCheckpointsForValidParents(client clientset.Interface, pods map[strin
 			glog.Errorf("Failed to checkpoint secrets for pod %s: %v", id, err)
 			continue
 		}
+		cp, err = checkpointConfigMapVolumes(client, cp)
+		if err != nil {
+			//TODO(aaron): This can end up spamming logs at times when api-server is unavailable. To reduce spam
+			//             we could only log error if api-server can't be contacted and existing configmap doesn't exist.
+			glog.Errorf("Failed to checkpoint configMaps for pod %s: %v", id, err)
+			continue
+		}
+
 		cp, err = sanitizeCheckpointPod(cp)
 		if err != nil {
 			glog.Errorf("Failed to sanitize manifest for %s: %v", id, err)
@@ -314,9 +366,15 @@ func getAPIParentPods(client clientset.Interface, nodeName string) map[string]*v
 	return podListToParentPods(podList)
 }
 
-// getAPIParentPods will retrieve all pods from kubelet api that are parents & should be checkpointed
-func getLocalParentPods() (map[string]*v1.Pod, error) {
-	resp, err := http.Get(kubeletAPIPodsURL)
+// A minimal kubelet client. It assumes the kubelet can be reached the kubelet's insecure API at
+// 127.0.0.1:10255 and the secure API at 127.0.0.1:10250.
+type kubeletClient struct {
+	client *http.Client
+}
+
+// localParentPods will retrieve all pods from kubelet api that are parents & should be checkpointed
+func (c *kubeletClient) localParentPods() (map[string]*v1.Pod, error) {
+	resp, err := c.client.Get(kubeletAPIPodsURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to contact kubelet pod api: %v", err)
 	}
@@ -334,14 +392,9 @@ func getLocalParentPods() (map[string]*v1.Pod, error) {
 	return podListToParentPods(&podList), nil
 }
 
-// Transports should be re-used and not created as needed: https://golang.org/pkg/net/http/#Transport
-var insecureTransport *http.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-
-// getLocalRunningPods uses the /runningpods/ kubelet api to retrieve the local container runtime pod state
-func getLocalRunningPods() (map[string]*v1.Pod, error) {
-	// TODO(aaron): The kubelet api is currently secured by a self-signed cert. We should update this to actually verify at some point
-	client := &http.Client{Transport: insecureTransport}
-	resp, err := client.Get(kubeletAPIRunningPodsURL)
+// localRunningPods uses the /runningpods/ kubelet api to retrieve the local container runtime pod state
+func (c *kubeletClient) localRunningPods() (map[string]*v1.Pod, error) {
+	resp, err := c.client.Get(kubeletAPIRunningPodsURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to contact kubelet pod api: %v", err)
 	}
@@ -401,6 +454,47 @@ func checkpointSecret(client clientset.Interface, namespace, podName, secretName
 	return basePath, nil
 }
 
+// checkpointConfigMapVolumes ensures that all pod configMaps are checkpointed locally, then converts the configMap volume to a hostpath.
+func checkpointConfigMapVolumes(client clientset.Interface, pod *v1.Pod) (*v1.Pod, error) {
+	for i := range pod.Spec.Volumes {
+		v := &pod.Spec.Volumes[i]
+		if v.ConfigMap == nil {
+			continue
+		}
+
+		path, err := checkpointConfigMap(client, pod.Namespace, pod.Name, v.ConfigMap.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to checkpoint configMap for pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		}
+
+		v.HostPath = &v1.HostPathVolumeSource{Path: path}
+		v.ConfigMap = nil
+	}
+	return pod, nil
+}
+
+// checkpointConfigMap will locally store configMap data.
+// The path to the configMap data becomes: checkpointSecretPath/namespace/podname/configMapName/configMap.file
+// Where each "configMap.file" is a key from the configMap.Data field.
+func checkpointConfigMap(client clientset.Interface, namespace, podName, configMapName string) (string, error) {
+	configMap, err := client.Core().ConfigMaps(namespace).Get(configMapName)
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve configMap %s/%s: %v", namespace, configMapName, err)
+	}
+
+	basePath := configMapPath(namespace, podName, configMapName)
+	if err := os.MkdirAll(basePath, 0700); err != nil {
+		return "", fmt.Errorf("failed to create configMap checkpoint path %s: %v", basePath, err)
+	}
+	// TODO(aaron): No need to store if already exists
+	for f, d := range configMap.Data {
+		if err := writeAndAtomicRename(filepath.Join(basePath, f), []byte(d), 0600); err != nil {
+			return "", fmt.Errorf("failed to write configMap %s: %v", configMap.Name, err)
+		}
+	}
+	return basePath, nil
+}
+
 func handleRemove(remove []string) {
 	for _, id := range remove {
 		// Remove inactive checkpoints
@@ -421,7 +515,11 @@ func handleRemove(remove []string) {
 		if err := os.RemoveAll(p); err != nil {
 			glog.Errorf("Failed to remove pod secrets from %s: %s", p, err)
 		}
-		// TODO(aaron): Remove configMaps when supported
+		// Remove ConfipMaps
+		p = PodFullNameToConfigMapPath(id)
+		if err := os.RemoveAll(p); err != nil {
+			glog.Errorf("Failed to remove pod configMaps from %s: %s", p, err)
+		}
 	}
 }
 
@@ -551,16 +649,13 @@ func PodFullNameToSecretPath(id string) string {
 	return filepath.Join(checkpointSecretPath, namespace, podname)
 }
 
-func newClient() clientset.Interface {
-	// This is run as a static pod, so we can't use InClusterConfig (no secrets/service account)
-	// Use the same kubeconfig as the kubelet for auth and api-server location.
-	kubeConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
-		&clientcmd.ConfigOverrides{}).ClientConfig()
-	if err != nil {
-		glog.Fatalf("Failed to load kubeconfig: %v", err)
-	}
-	return clientset.NewForConfigOrDie(kubeConfig)
+func configMapPath(namespace, podName, configMapName string) string {
+	return filepath.Join(checkpointConfigMapPath, namespace, podName, configMapName)
+}
+
+func PodFullNameToConfigMapPath(id string) string {
+	namespace, podname := path.Split(id)
+	return filepath.Join(checkpointConfigMapPath, namespace, podname)
 }
 
 func writeAndAtomicRename(path string, data []byte, perm os.FileMode) error {

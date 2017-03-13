@@ -50,7 +50,7 @@ spec:
     spec:
       containers:
       - name: kubelet
-        image: quay.io/coreos/hyperkube:v1.5.3_coreos.0
+        image: quay.io/coreos/hyperkube:v1.5.4_coreos.0
         command:
         - ./hyperkube
         - kubelet
@@ -147,7 +147,7 @@ spec:
       hostNetwork: true
       containers:
       - name: kube-apiserver
-        image: quay.io/coreos/hyperkube:v1.5.3_coreos.0
+        image: quay.io/coreos/hyperkube:v1.5.4_coreos.0
         command:
         - /usr/bin/flock
         - --exclusive
@@ -167,6 +167,8 @@ spec:
         - --runtime-config=api/all=true
         - --tls-cert-file=/etc/kubernetes/secrets/apiserver.crt
         - --tls-private-key-file=/etc/kubernetes/secrets/apiserver.key
+        - --kubelet-client-certificate=/etc/kubernetes/secrets/apiserver.crt
+        - --kubelet-client-key=/etc/kubernetes/secrets/apiserver.key
         - --service-account-key-file=/etc/kubernetes/secrets/service-account.pub
         - --client-ca-file=/etc/kubernetes/secrets/ca.crt
         - --authorization-mode=RBAC
@@ -198,6 +200,50 @@ spec:
         hostPath:
           path: /var/lock
 `)
+
+	KencTemplate = []byte(`apiVersion: "extensions/v1beta1"
+kind: DaemonSet
+metadata:
+  name: kenc
+  namespace: kube-system
+  labels:
+    k8s-app: kenc
+spec:
+  template:
+    metadata:
+      labels:
+        k8s-app: kenc
+      annotations:
+        checkpointer.alpha.coreos.com/checkpoint: "true"
+    spec:
+      nodeSelector:
+        master: "true"
+      hostNetwork: true
+      containers:
+      - image: quay.io/coreos/kenc:82343328b867a762ffca07c2877f0079a99c8f1a
+        name: kenc
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /etc/kubernetes/selfhosted-etcd
+          name: checkpoint-dir
+          readOnly: false
+        - mountPath: /var/lock
+          name: var-lock
+          readOnly: false
+        command:
+        - "/bin/sh"
+        - "-c"
+        - "/usr/bin/flock --exclusive --timeout=30 /var/lock/kenc.lock; kenc -r -m iptables && kenc -m iptables"
+      volumes:
+      - name: checkpoint-dir
+        hostPath:
+          path: /etc/kubernetes/checkpoint-iptables    
+      - name: var-lock
+        hostPath:
+          path: /var/lock
+`)
+
 	CheckpointerTemplate = []byte(`apiVersion: "extensions/v1beta1"
 kind: DaemonSet
 metadata:
@@ -216,7 +262,7 @@ spec:
       hostNetwork: true
       containers:
       - name: checkpoint-installer
-        image: quay.io/coreos/pod-checkpointer:5b585a2d731173713fa6871c436f6c53fa17f754
+        image: quay.io/coreos/pod-checkpointer:417b8f7552ccf3db192ba1e5472e524848f0eb5f
         command:
         - /checkpoint-installer.sh
         volumeMounts:
@@ -245,7 +291,7 @@ spec:
         master: "true"
       containers:
       - name: kube-controller-manager
-        image: quay.io/coreos/hyperkube:v1.5.3_coreos.0
+        image: quay.io/coreos/hyperkube:v1.5.4_coreos.0
         command:
         - ./hyperkube
         - controller-manager
@@ -256,7 +302,6 @@ spec:
         - --service-account-private-key-file=/etc/kubernetes/secrets/service-account.key
         - --leader-elect=true
         - --cloud-provider={{ .CloudProvider  }}
-        - --configure-cloud-routes=false
         volumeMounts:
         - name: secrets
           mountPath: /etc/kubernetes/secrets
@@ -302,7 +347,7 @@ spec:
         master: "true"
       containers:
       - name: kube-scheduler
-        image: quay.io/coreos/hyperkube:v1.5.3_coreos.0
+        image: quay.io/coreos/hyperkube:v1.5.4_coreos.0
         command:
         - ./hyperkube
         - scheduler
@@ -335,7 +380,7 @@ spec:
       hostNetwork: true
       containers:
       - name: kube-proxy
-        image: quay.io/coreos/hyperkube:v1.5.3_coreos.0
+        image: quay.io/coreos/hyperkube:v1.5.4_coreos.0
         command:
         - /hyperkube
         - proxy
